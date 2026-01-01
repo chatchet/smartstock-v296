@@ -171,6 +171,32 @@ with tab2:
 
             st.subheader(ui("交易明细", "Trades"))
             st.dataframe(trades, use_container_width=True)
+# 在侧边栏添加免责声明
+st.sidebar.markdown("---")
+st.sidebar.caption("📊 **Disclaimer / 免责声明**")
+st.sidebar.caption("""
+本系统仅供研究参考，不构成投资建议。风险自担。
+For research only. Not financial advice. Use at your own risk.
+""")
+
+# 在主界面添加操作说明
+with st.expander("📖 Usage Guide & Logic / 操作说明与逻辑逻辑"):
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("""
+        **中文说明：**
+        1. 输入代码（如 D05.SI）并执行分析。
+        2. **BX系统**：柱状图代表短线爆发力，线条代表长线趋势。
+        3. **信号逻辑**：包含宏观 Veto 过滤，确保不在下降趋势中盲目抄底。
+        """)
+    with col2:
+        st.markdown("""
+        **English Guide:**
+        1. Enter ticker and run analysis.
+        2. **BX System**: Histogram for short-term burst, Line for long-term trend.
+        3. **Logic**: Includes Macro Veto to avoid catching falling knives in downtrends.
+        """)
+
 
 
 
