@@ -1,50 +1,53 @@
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-from engine import run_smartstock_v296_engine
+# 在 engine.py 中确保有这个函数
+def run_eod_analyzer(symbol):
+    df = yf.download(symbol, period="2y", auto_adjust=True)
+    if df.empty: return None
+    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
 
-st.set_page_config(page_title="SmartStock V2.9.6 Audit", layout="wide")
+    # 1. 计算指标 (与回测口径严格一致)
+    # 周线逻辑
+    df_w = df['Close'].resample('W').last().to_frame()
+    df_w['MA50_w'] = df_w['Close'].rolling(50).mean()
+    rsi_20_w = calculate_rsi_wilder(df_w['Close'], 20)
+    df_w['bx_l'] = (rsi_20_w - 50).ewm(span=10, adjust=False).mean()
+    w_bull = (df_w['Close'].iloc[-1] > df_w['MA50_w'].iloc[-1]) and (df_w['bx_l'].iloc[-1] > -5)
+    
+    # 月线逻辑
+    df_m = df['Close'].resample('ME').last().to_frame()
+    m_bull = df_m['Close'].iloc[-1] > df_m['Close'].rolling(20).mean().iloc[-1]
 
-st.title("⚖️ SmartStock V2.9.6 Audit System")
-st.caption("Singapore Market Aligned | True-Sync Backtest Engine")
+    # 日线逻辑
+    curr_c = df['Close'].iloc[-1]
+    curr_h = df['High'].iloc[-1]
+    curr_l = df['Low'].iloc[-1]
+    curr_v = df['Volume'].iloc[-1]
+    upper_ref = df['High'].rolling(252).max().shift(1).iloc[-1]
+    ma50 = df['Close'].rolling(50).mean().iloc[-1]
+    vol_ma20 = df['Volume'].rolling(20).mean().iloc[-1]
+    
+    bx_s_series = (calculate_rsi_wilder(df['Close'], 5) - 50).ewm(span=3, adjust=False).mean()
+    bx_s_now = bx_s_series.iloc[-1]
+    bx_s_prev = bx_s_series.iloc[-2]
 
-# Sidebar
-with st.sidebar:
-    st.header("Settings")
-    ticker = st.text_input("Ticker (Yahoo Finance)", value="D05.SI")
-    start_date = st.date_input("Start Date", value=pd.to_datetime("2010-01-01"))
-    btn_run = st.button("Run Audit Backtest")
+    # 2. 信号判定
+    macro_pass = w_bull and m_bull
+    signal = "WAIT"
+    
+    # 逻辑优先级：Breakout > Reversal > Entry_Plan
+    if curr_c > upper_ref and (curr_c - curr_l)/(curr_h - curr_l) > 0.7 and curr_v > vol_ma20 * 1.2:
+        signal = "BREAKOUT" if macro_pass else "VETOED_BREAKOUT"
+    elif bx_s_prev <= 0 and bx_s_now > 0 and curr_c > ma50:
+        signal = "REVERSAL" if macro_pass else "VETOED_REVERSAL"
+    elif curr_c > upper_ref * 0.97:
+        signal = "ENTRY_PLAN"
 
-# 修改后的 app.py 核心部分
-tab1, tab2 = st.tabs(["🎯 Daily Analysis (EOD)", "📊 Audit Backtest"])
-
-with tab1:
-    st.subheader("Universal EOD Signal Radar")
-    if st.button("Scan Current Signals"):
-        res = run_eod_analyzer(ticker)
-        if res:
-            st.json(res) # 也可以用 st.table(pd.DataFrame([res])) 展示
-            if res["Signal"] != "WAIT":
-                st.success(f"Signal Detected: {res['Signal']}")
-
-with tab2:
- if btn_run:
-    with st.spinner("Synchronizing data and auditing signals..."):
-        stats, trades, equity = run_smartstock_v296_engine(ticker, start_date, "2026-01-01")
-        
-        if stats:
-            # Metrics
-            total_ret = (equity['Equity'].iloc[-1] / 100000.0) - 1
-            st.columns(3)[0].metric("Total Return", f"{total_ret:.2%}")
-            st.columns(3)[1].metric("Macro Vetoes", stats['veto'])
-            st.columns(3)[2].metric("Integrity Check", "PASS ✅")
-
-            # Chart
-            fig = px.line(equity, x='Date', y='Equity', title=f"Equity Curve: {ticker}")
-            st.plotly_chart(fig, use_container_width=True)
-
-            # Trades list
-            st.subheader("Audit Trade Log")
-            st.dataframe(trades, use_container_width=True)
-        else:
-            st.error("No data found. Check the ticker symbol.")
+    return {
+        "Ticker": symbol,
+        "Price": round(curr_c, 3),
+        "Signal": signal,
+        "Weekly_Bull": "YES" if w_bull else "NO",
+        "Monthly_Bull": "YES" if m_bull else "NO",
+        "bx_s": round(bx_s_now, 2),
+        "bx_l": round(df_w['bx_l'].iloc[-1], 2),
+        "Vol_Ratio": round(curr_v / vol_ma20, 2) if vol_ma20 > 0 else 0
+    }
