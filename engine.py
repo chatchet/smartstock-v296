@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 import yfinance as yf
-import pandas_ta as ta
 
 def calculate_rsi_wilder(series, period):
     delta = series.diff()
@@ -12,12 +11,12 @@ def calculate_rsi_wilder(series, period):
     return 100 - (100 / (1 + rs))
 
 def run_eod_analyzer(symbol):
-    # 抓取 3 年数据以支撑 200D MA 和月线计算
+    # 获取3年数据以支撑长周期指标 
     df = yf.download(symbol, period="3y", auto_adjust=True)
     if df.empty: return None
     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
 
-    # 1. 基础物理参数 (Physics Log)
+    # 1. 物理参数确权 
     curr_c = df['Close'].iloc[-1]
     curr_h = df['High'].iloc[-1]
     curr_l = df['Low'].iloc[-1]
@@ -31,7 +30,7 @@ def run_eod_analyzer(symbol):
     vol_ratio = curr_v / vol_avg20 if vol_avg20 > 0 else 0
     close_pos = (curr_c - curr_l) / (curr_h - curr_l) if curr_h != curr_l else 0
 
-    # 2. 宏观判定 [cite: 1, 4]
+    # 2. 宏观判定 (M/W Check) 
     df_w = df['Close'].resample('W').last().to_frame()
     df_w['MA50_w'] = df_w['Close'].rolling(50).mean()
     w_bull = df_w['Close'].iloc[-1] > df_w['MA50_w'].iloc[-1]
@@ -39,14 +38,15 @@ def run_eod_analyzer(symbol):
     df_m = df['Close'].resample('ME').last().to_frame()
     m_bull = df_m['Close'].iloc[-1] > df_m['Close'].rolling(20).mean().iloc[-1]
 
-    # 3. 审计结论 [cite: 2, 3]
-    action, reason = "WAIT", "Normal Consolidation"
+    # 3. 逻辑结论 (对齐报告 )
+    action, reason = "WAIT", "Consolidation"
     if dist_to_high < 0.01:
         if vol_ratio < 1.2:
             action, reason = "WAIT / ABSORBING", "Low volume near high. (高位缩量消化)"
         elif close_pos > 0.7:
-            action, reason = "BREAKOUT", "Strong volume breakout."
+            action, reason = "BREAKOUT", "High volume breakout."
 
+    # 修复：确保所有输出为基础字符串或数值，防止 ValueError 
     return {
         "Ticker": symbol,
         "Price": round(curr_c, 3),
@@ -63,7 +63,4 @@ def run_eod_analyzer(symbol):
 def run_smartstock_v296_engine(symbol, start, end):
     df = yf.download(symbol, start=start, end=end, auto_adjust=True)
     if df.empty: return {}, pd.DataFrame(), pd.DataFrame()
-    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-    cash, pos = 100000.0, 0
-    equity_curve = [{'Date': d, 'Equity': cash} for d in df.index]
-    return {'veto': 0}, pd.DataFrame(), pd.DataFrame(equity_curve)
+    return {'veto': 0}, pd.DataFrame(), pd.DataFrame({'Date': df.index, 'Equity': 100000.0})
