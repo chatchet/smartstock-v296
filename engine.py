@@ -11,32 +11,40 @@ def calculate_rsi_wilder(series, period):
     return 100 - (100 / (1 + rs))
 
 def run_eod_analyzer(symbol):
-    # 抓取3.5年数据以确保长周期MA计算准确
-    df = yf.download(symbol, period="4y", auto_adjust=True)
+    # 抓取3年数据以支撑 200D MA 计算
+    df = yf.download(symbol, period="3y", auto_adjust=True)
     if df.empty: return None
     if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
 
-    # 物理参数计算 [cite: 2, 3]
+    # 1. 物理参数确权 (Physics Log)
     curr_c = df['Close'].iloc[-1]
     curr_h = df['High'].iloc[-1]
     curr_l = df['Low'].iloc[-1]
     curr_v = df['Volume'].iloc[-1]
     
+    # 对齐报告逻辑：252日高点、20日低点 
     upper_252 = df['High'].rolling(252).max().shift(1).iloc[-1]
-    low_20 = df['Low'].rolling(20).min().shift(1).iloc[-1] 
+    low_20 = df['Low'].rolling(20).min().shift(1).iloc[-1]
     vol_avg20 = df['Volume'].rolling(20).mean().shift(1).iloc[-1]
     
     dist_to_high = (upper_252 - curr_c) / upper_252
     vol_ratio = curr_v / vol_avg20 if vol_avg20 > 0 else 0
     close_pos = (curr_c - curr_l) / (curr_h - curr_l) if curr_h != curr_l else 0
 
-    # 逻辑判定对齐审计摘要 [cite: 2]
+    # 2. 宏观判定 (Macro Check M/W)
+    df_w = df['Close'].resample('W').last().to_frame()
+    w_bull = df_w['Close'].iloc[-1] > df_w['Close'].rolling(50).mean().iloc[-1]
+    df_m = df['Close'].resample('ME').last().to_frame()
+    m_bull = df_m['Close'].iloc[-1] > df_m['Close'].rolling(20).mean().iloc[-1]
+
+    # 3. 审计结论 (Action / Reason)
     action, reason = "WAIT / 等待", "Normal Consolidation"
+    # 当距离高点小于 1.0% 时进行压力消化判定 
     if dist_to_high < 0.01:
         if vol_ratio < 1.2:
-            action, reason = "WAIT / ABSORBING", "Low volume near high. (高位缩量消化)" [cite: 2]
+            action, reason = "WAIT / ABSORBING", "Low volume near high. (高位缩量消化)"
         elif close_pos > 0.7:
-            action, reason = "BREAKOUT", "Strong volume breakout."
+            action, reason = "BREAKOUT", "Strong volume breakout confirmed."
 
     return {
         "Ticker": symbol,
@@ -44,8 +52,9 @@ def run_eod_analyzer(symbol):
         "Action": action,
         "Reason": reason,
         "Gap": f"{dist_to_high:.2%}",
-        "Fuel": f"{vol_ratio:.2f}x", 
+        "Fuel": f"{vol_ratio:.2f}x",
         "Push": f"{close_pos:.1%}",
+        "Macro": "PASS" if (w_bull and m_bull) else "FAIL",
         "Stop": round(low_20, 2),
         "Full_Data": df
     }
