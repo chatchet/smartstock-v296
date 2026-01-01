@@ -15,7 +15,20 @@ with st.sidebar:
     start_date = st.date_input("Start Date", value=pd.to_datetime("2010-01-01"))
     btn_run = st.button("Run Audit Backtest")
 
-if btn_run:
+# 修改后的 app.py 核心部分
+tab1, tab2 = st.tabs(["🎯 Daily Analysis (EOD)", "📊 Audit Backtest"])
+
+with tab1:
+    st.subheader("Universal EOD Signal Radar")
+    if st.button("Scan Current Signals"):
+        res = run_eod_analyzer(ticker)
+        if res:
+            st.json(res) # 也可以用 st.table(pd.DataFrame([res])) 展示
+            if res["Signal"] != "WAIT":
+                st.success(f"Signal Detected: {res['Signal']}")
+
+with tab2:
+ if btn_run:
     with st.spinner("Synchronizing data and auditing signals..."):
         stats, trades, equity = run_smartstock_v296_engine(ticker, start_date, "2026-01-01")
         
