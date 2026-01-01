@@ -14,18 +14,17 @@ def get_rsi_ema(series, period, ema_span):
 
 def run_eod_analyzer(symbol):
     try:
-        # 1. 独立下载三周期数据
+        # 1. 独立下载三周期，拒绝 resample 导致的偏移
         d_raw = yf.download(symbol, period="2y", interval="1d", auto_adjust=True)
         w_raw = yf.download(symbol, period="5y", interval="1wk", auto_adjust=True)
         m_raw = yf.download(symbol, period="10y", interval="1mo", auto_adjust=True)
         
         if d_raw.empty or w_raw.empty: return None
-        
         for df in [d_raw, w_raw, m_raw]:
             if isinstance(df.columns, pd.MultiIndex): 
                 df.columns = df.columns.get_level_values(0)
 
-        # 2. V2.9.6 指标确权
+        # 2. V2.9.6 物理记录口径
         c_d = d_raw['Close'].iloc[-1]
         h_ref_d = d_raw['High'].rolling(252).max().shift(1).iloc[-1]
         s_ref_d = d_raw['Low'].rolling(20).min().shift(1).iloc[-1]
@@ -35,7 +34,7 @@ def run_eod_analyzer(symbol):
         bx_s = get_rsi_ema(d_raw['Close'], 5, 3)
         bx_l_w = get_rsi_ema(w_raw['Close'], 20, 10).iloc[-1]
         
-        # 3. 信号树
+        # 3. V2.9.6 信号树 (W/M 趋势过滤)
         w_bullish = (w_raw['Close'].iloc[-1] > w_raw['Close'].rolling(50).mean().iloc[-1]) and (bx_l_w > -5)
         m_pass = m_raw['Close'].iloc[-1] > m_raw['Close'].rolling(20).mean().iloc[-1]
         
@@ -47,20 +46,19 @@ def run_eod_analyzer(symbol):
         if c_d < s_ref_d:
             action, reason = "SELL / 卖出", "Break Support Line"
         elif not (w_bullish and m_pass):
-            action, reason = "WAIT / MACRO_VETO", "Macro trend not aligned"
+            action, reason = "WAIT / MACRO_VETO", "Macro trend (Weekly/Monthly) failed"
         else:
             if c_d > h_ref_d:
-                action, reason = ("BUY / 突破买入", "Strong Breakout") if fuel > 1.2 else ("WAIT / 弱突破", "Low energy")
+                action, reason = ("BUY / 突破买入", "Strong Breakout with Fuel") if fuel > 1.2 else ("WAIT / 弱突破", "High price but low energy")
             elif dist_pct < 0.01 and fuel < 1.0:
-                action, reason = "WAIT / ABSORBING", "Low volume near high"
+                action, reason = "WAIT / ABSORBING", "Low volume near high (ABSORBING)"
             elif bx_s.iloc[-2] <= 0 and bx_s.iloc[-1] > 0 and c_d > ma_mid_d:
-                action, reason = "BUY / 反转买入", "Momentum Reversal"
+                action, reason = "BUY / 反转买入", "Momentum Reversal (BX_S Golden Cross)"
 
         return {
             "Action": action, "Reason": reason,
             "Fuel": f"{fuel:.2f}x", "Push": f"{push:.1%}", "Gap": f"{dist_pct:.2%}", "Stop": round(s_ref_d, 2),
             "D_Data": d_raw, "W_Data": w_raw, "M_Data": m_raw
         }
-    except Exception as e:
-        print(f"Error: {e}")
+    except:
         return None
