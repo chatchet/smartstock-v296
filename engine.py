@@ -94,3 +94,48 @@ def run_smartstock_v296_engine(symbol, start, end):
                     stats['ch_rev'] += 1
 
     return stats, pd.DataFrame(trades), pd.DataFrame(equity_curve)
+
+# 在 engine.py 末尾添加
+def run_eod_analyzer(symbol):
+    # 抓取最近一年半的数据，确保指标计算完整
+    df = yf.download(symbol, period="2y", auto_adjust=True)
+    if df.empty: return None
+    if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+
+    # 计算与回测同口径的指标
+    # 周/月同步 (取最后一行)
+    df_w = df['Close'].resample('W').last().to_frame()
+    df_w['MA50_w'] = df_w['Close'].rolling(50).mean()
+    df_w['bx_l'] = (calculate_rsi_wilder(df_w['Close'], 20) - 50).ewm(span=10, adjust=False).mean()
+    
+    # 获取当前状态
+    curr_c = df['Close'].iloc[-1]
+    curr_h = df['High'].iloc[-1]
+    curr_l = df['Low'].iloc[-1]
+    curr_v = df['Volume'].iloc[-1]
+    
+    upper_ref = df['High'].rolling(252).max().shift(1).iloc[-1]
+    ma50 = df['Close'].rolling(50).mean().iloc[-1]
+    vol_ma20 = df['Volume'].rolling(20).mean().iloc[-1]
+    
+    bx_s_now = (calculate_rsi_wilder(df['Close'], 5) - 50).ewm(span=3, adjust=False).mean().iloc[-1]
+    bx_s_prev = (calculate_rsi_wilder(df['Close'], 5) - 50).ewm(span=3, adjust=False).mean().iloc[-2]
+
+    # 逻辑判定
+    w_bull = (df_w['Close'].iloc[-1] > df_w['MA50_w'].iloc[-1]) and (df_w['bx_l'].iloc[-1] > -5)
+    
+    # 构造返回结果
+    analysis = {
+        "Ticker": symbol,
+        "Price": round(curr_c, 3),
+        "Upper_Channel": round(upper_ref, 3),
+        "Weekly_Bullish": "YES" if w_bull else "NO",
+        "bx_s": round(bx_s_now, 2),
+        "Signal": "WAIT"
+    }
+    
+    if curr_c > upper_ref * 0.97 and curr_c < upper_ref: analysis["Signal"] = "ENTRY_PLAN"
+    if curr_c > upper_ref and (curr_c - curr_l)/(curr_h - curr_l) > 0.7: analysis["Signal"] = "BREAKOUT"
+    if bx_s_prev <= 0 and bx_s_now > 0 and curr_c > ma50: analysis["Signal"] = "REVERSAL"
+    
+    return analysis
