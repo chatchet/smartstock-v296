@@ -1,91 +1,171 @@
 import streamlit as st
-import pandas as pd
 import mplfinance as mpf
 import matplotlib.pyplot as plt
-from engine import run_eod_analyzer, run_smartstock_v296_engine
+import pandas as pd
 
-# 页面设置
-st.set_page_config(page_title="SmartStock V2.9.6 Audit / 智能股票审计", layout="wide")
+from engine import run_eod_analyzer, get_rsi_ema, run_smartstock_v296_engine
 
-# --- 绘图函数：使用与 Colab 完全一致的指标 ---
-def draw_v296_charts(data_dict, ticker):
-    fig = plt.figure(figsize=(14, 22), facecolor='white')
+
+st.set_page_config(page_title="SmartStock V2.9.6 Audit", layout="wide")
+
+
+# ====== Bilingual UI strings ======
+UI = {
+    "title": "SmartStock V2.9.6 审计系统 / Audit System",
+    "ticker": "股票代码 / Ticker Symbol",
+    "start": "回测开始日期 / Backtest Start",
+    "run_eod": "运行收盘审计 / RUN EOD ANALYSIS",
+    "run_bt": "运行回测审计 / RUN BACKTEST",
+    "tab1": "【 审计摘要 / AUDIT SUMMARY 】",
+    "tab2": "【 回测审计 / BACKTEST AUDIT 】",
+    "action": "动作 / ACTION",
+    "reason": "原因 / REASON",
+    "fuel": "燃料(量能) / Fuel",
+    "push": "推动(收盘位置) / Push",
+    "gap": "距高点 / Gap",
+    "stop": "止损线 / Stop (20D-LOW)",
+    "macro": "宏观过滤 / Macro",
+    "chart": "多周期图表审计 / Multi-Period Chart Audit",
+    "perf": "策略表现 / Strategy Performance",
+    "total_return": "总回报 / Total Return",
+    "trades": "交易次数 / Total Trades",
+    "final_equity": "最终净值 / Final Equity",
+    "veto": "宏观否决 / Macro Vetoes",
+    "breakout": "突破次数 / Breakout",
+    "reversal": "反转次数 / Reversal",
+    "no_data": "数据不足或下载失败 / Not enough data or download failed",
+}
+
+
+def draw_v296_charts(data_dict, ticker: str):
+    """
+    目标：尽可能对齐你 Colab 的 V2.9.6 图
+    - Up: green, Down: red
+    - show_n / datetime_format 对齐
+    - HI/LO shift(1)
+    - MA 不 shift
+    - BX: Daily(5,3) bar + Weekly/Monthly(20,10) line
+    """
+    # --- Candle colors aligned with your Colab image ---
+    mc = mpf.make_marketcolors(
+        up="#26a69a", down="#ef5350", edge="inherit", wick="inherit", volume="inherit"
+    )
+    style = mpf.make_mpf_style(
+        marketcolors=mc, gridstyle="--", gridcolor="#eeeeee", facecolor="white"
+    )
+
+    fig = plt.figure(figsize=(14, 22), facecolor="white")
+
     configs = [
-        (data_dict['D_Data'], 80, 252, 20, 200, "DAILY 日线"),
-        (data_dict['W_Data'], 52, 52, 10, 50, "WEEKLY 周线"),
-        (data_dict['M_Data'], 40, 12, 6, 20, "MONTHLY 月线")
+        # df_key, show_n, HI, LO, MA, name, datetime_format
+        ("D_Data", 150, 252, 20, 200, "DAILY", "%b %d"),
+        ("W_Data", 120, 52, 10, 50, "WEEKLY", "%Y-%m"),
+        ("M_Data", 120, 12, 6, 20, "MONTHLY", "%Y-%m"),
     ]
-    for i, (df_raw, show_n, h_p, l_p, ma_p, name) in enumerate(configs):
+
+    for i, (key, show_n, h_p, l_p, ma_p, name, dt_fmt) in enumerate(configs):
+        df_raw = data_dict.get(key)
+        if df_raw is None or df_raw.empty:
+            continue
+
         df = df_raw.copy()
-        df['HI'] = df['High'].rolling(h_p).max().shift(1)
-        df['LO'] = df['Low'].rolling(l_p).min().shift(1)
-        df['MA'] = df['Close'].rolling(ma_p).mean()
-        # BX 指标：短柱、长线
-        df['bx_s'] = ( (df['Close'].diff().where(df['Close'].diff()>0,0)).ewm(alpha=1/5, adjust=False).mean() /
-                       (df['Close'].diff().where(df['Close'].diff()<0,0).abs().ewm(alpha=1/5, adjust=False).mean()+1e-9) )
-        df['bx_s'] = (100 - 100/(1+df['bx_s']) - 50).ewm(span=3, adjust=False).mean()
-        rsi20 = ((df['Close'].diff().where(df['Close'].diff()>0,0)).ewm(alpha=1/20, adjust=False).mean() /
-                 (df['Close'].diff().where(df['Close'].diff()<0,0).abs().ewm(alpha=1/20, adjust=False).mean()+1e-9))
-        rsi20 = 100 - 100/(1+rsi20)
-        df['bx_l'] = (rsi20 - 50).ewm(span=10, adjust=False).mean()
+
+        # --- Core overlays (aligned with V2.9.6) ---
+        df["HI"] = df["High"].rolling(h_p).max().shift(1)
+        df["LO"] = df["Low"].rolling(l_p).min().shift(1)
+        df["MA"] = df["Close"].rolling(ma_p).mean()   # no shift
+
+        # --- BX parameters by timeframe ---
+        if name == "DAILY":
+            df["bx_s"] = get_rsi_ema(df["Close"], 5, 3)      # bar
+            df["bx_l"] = get_rsi_ema(df["Close"], 20, 10)    # line (still ok to display)
+        else:
+            # weekly/monthly: line uses (20,10); bar uses (5,3) but you can still display bar for consistency
+            df["bx_s"] = get_rsi_ema(df["Close"], 5, 3)
+            df["bx_l"] = get_rsi_ema(df["Close"], 20, 10)
 
         p_df = df.tail(show_n)
-        # 价格图
-        ax_p = plt.subplot2grid((9,1), (i*3,0), rowspan=2)
-        # 动能图
-        ax_b = plt.subplot2grid((9,1), (i*3+2,0), rowspan=1)
-        # 附加指标
-        add_plots = [
-            mpf.make_addplot(p_df['HI'], ax=ax_p, color='#9c27b0', linestyle='--'),
-            mpf.make_addplot(p_df['LO'], ax=ax_p, color='#ff9800', linestyle=':'),
-            mpf.make_addplot(p_df['MA'], ax=ax_p, color='#2196f3'),
-            mpf.make_addplot(p_df['bx_s'], ax=ax_b, type='bar',
-                             color=['#26a69a' if v > 0 else '#ef5350' for v in p_df['bx_s']], width=0.7),
-            mpf.make_addplot(p_df['bx_l'], ax=ax_b, color='#1a237e', linewidth=1.5)
+
+        ax_p = plt.subplot2grid((9, 1), (i * 3, 0), rowspan=2)
+        ax_b = plt.subplot2grid((9, 1), (i * 3 + 2, 0), rowspan=1)
+
+        bx_colors = ["#26a69a" if v > 0 else "#ef5350" for v in p_df["bx_s"]]
+
+        apds = [
+            mpf.make_addplot(p_df["HI"], ax=ax_p, color="#9c27b0", linestyle="--", width=1.0),
+            mpf.make_addplot(p_df["LO"], ax=ax_p, color="#ff9800", linestyle=":", width=1.5),
+            mpf.make_addplot(p_df["MA"], ax=ax_p, color="#2196f3", linestyle="-", width=1.2),
+
+            mpf.make_addplot(p_df["bx_s"], ax=ax_b, type="bar", color=bx_colors, width=0.7),
+            mpf.make_addplot(p_df["bx_l"], ax=ax_b, color="#1a237e", width=1.5),  # ✅ 修复：width，不是 linewidth
         ]
-        mpf.plot(p_df, type='candle', ax=ax_p, addplot=add_plots, style='charles', datetime_format='%y-%m')
-        ax_p.set_title(f"{name}  {ticker}  V2.9.6", fontsize=12, fontweight='bold', loc='left')
-        ax_b.axhline(0, color='gray', linewidth=0.5, alpha=0.5)
-        ax_b.set_ylabel("BX 动能", fontsize=8)
+
+        mpf.plot(
+            p_df,
+            type="candle",
+            ax=ax_p,
+            addplot=apds,
+            style=style,
+            datetime_format=dt_fmt,
+            xrotation=15,
+            axtitle="",
+            volume=False,
+            warn_too_much_data=999999,
+        )
+
+        ax_p.set_title(f"{name} | {ticker} | V2.9.6", fontsize=12, fontweight="bold", loc="left")
+        ax_b.axhline(0, color="gray", alpha=0.3)
+        ax_b.set_ylabel("BX", fontsize=8)
+
     plt.tight_layout()
     return fig
 
-# --- 页面布局 ---
-st.sidebar.title("SmartStock V2.9.6 审计系统 / Audit System")
-ticker = st.sidebar.text_input("Ticker Symbol / 股票代码", "D05.SI")
-start_date = st.sidebar.date_input("Backtest Start / 回测开始日期", value=pd.to_datetime("2020-01-01"))
 
-tab_summary, tab_backtest = st.tabs(["【EOD 审计摘要 / Summary】", "【回测深度审计 / Backtest Audit】"])
+# ====== UI ======
+st.title(UI["title"])
+ticker = st.sidebar.text_input(UI["ticker"], value="D05.SI")
+start_date = st.sidebar.date_input(UI["start"], value=pd.to_datetime("2020-01-01"))
 
-with tab_summary:
-    if st.sidebar.button("执行EOD分析 / Run EOD Analysis"):
+t1, t2 = st.tabs([UI["tab1"], UI["tab2"]])
+
+with t1:
+    if st.sidebar.button(UI["run_eod"]):
         res = run_eod_analyzer(ticker)
-        if res:
-            st.markdown(f"**Action 动作:** {res['Action_EN']} / {res['Action_CN']}")
-            st.markdown(f"**Reason 原因:** {res['Reason_EN']} / {res['Reason_CN']}")
-            cols = st.columns(4)
-            cols[0].metric("Fuel 燃料", res["Fuel"])
-            cols[1].metric("Push 推力", res["Push"])
-            cols[2].metric("Gap 距离高点", res["Gap"])
-            cols[3].metric("Stop 止损位", res["Stop"])
-            fig = draw_v296_charts(res, ticker)
-            st.pyplot(fig)
-            st.markdown("*注：所有指标已与 Colab V2.9.6 策略对齐。*")
-
-with tab_backtest:
-    if st.sidebar.button("执行全量回测 / Run Full Backtest"):
-        stats, trades_df, equity_df = run_smartstock_v296_engine(ticker, str(start_date), str(pd.to_datetime('today').date()))
-        if equity_df.empty:
-            st.error("无有效数据 / No valid data.")
+        if not res:
+            st.error(UI["no_data"])
         else:
-            st.markdown(f"**Total Return 总收益率:** {stats['TotalReturn_EN']} / {stats['TotalReturn_CN']}")
-            st.markdown(f"**Max Drawdown 最大回撤:** {stats['MaxDrawdown_EN']} / {stats['MaxDrawdown_CN']}")
-            st.markdown(f"**Trades 交易笔数:** {stats['Trades']} （Breakouts: {stats['BreakoutTrades']}，Reversals: {stats['ReversalTrades']}）")
-            if stats['BreakoutWinRate'] is not None:
-                st.markdown(f"**Breakout Win Rate 突破胜率:** {stats['BreakoutWinRate']:.1%}")
-            if stats['ReversalWinRate'] is not None:
-                st.markdown(f"**Reversal Win Rate 反转胜率:** {stats['ReversalWinRate']:.1%}")
-            st.markdown(f"**Final Equity 期末净值:** {stats['FinalEquity']}")
-            st.line_chart(equity_df.set_index('Date')['Equity'])
-            st.dataframe(trades_df)
+            st.info(f"### {UI['action']}: {res['Action']}")
+            st.write(f"**{UI['reason']}:** {res['Reason']}")
+
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric(UI["fuel"], res["Fuel"])
+            c2.metric(UI["push"], res["Push"])
+            c3.metric(UI["gap"], res["Gap"])
+            c4.metric(UI["stop"], res["Stop"])
+            c5.metric(UI["macro"], res["Macro"])
+
+            st.subheader(UI["chart"])
+            st.pyplot(draw_v296_charts(res, ticker))
+
+with t2:
+    if st.sidebar.button(UI["run_bt"]):
+        stats, trades, equity = run_smartstock_v296_engine(ticker, start_date, pd.to_datetime("today"))
+        if equity is None or equity.empty:
+            st.error(UI["no_data"])
+        else:
+            st.subheader(f"{UI['perf']}: {ticker}")
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric(UI["total_return"], stats.get("Total Return", "n/a"))
+            c2.metric(UI["trades"], stats.get("Trades", 0))
+            c3.metric(UI["final_equity"], stats.get("Final Value", "n/a"))
+
+            c4, c5, c6 = st.columns(3)
+            c4.metric(UI["veto"], stats.get("Macro Vetoes", 0))
+            c5.metric(UI["breakout"], stats.get("Breakout", 0))
+            c6.metric(UI["reversal"], stats.get("Reversal", 0))
+
+            st.line_chart(equity.set_index("Date")["Equity"])
+            st.dataframe(trades)
+
 
