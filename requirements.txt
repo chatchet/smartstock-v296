@@ -2,4 +2,4 @@ pandas
 yfinance
 streamlit
 mplfinance
-pandas_ta
+numpy
