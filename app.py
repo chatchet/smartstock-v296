@@ -6,13 +6,13 @@ from engine import run_smartstock_v296_engine, run_eod_analyzer, calculate_rsi_w
 
 st.set_page_config(page_title="SmartStock V2.9.6 Dashboard", layout="wide")
 
-def draw_audit_charts(df, ticker):
-    """绘制三周期联动图表，包含 B-XTRender 动能系统 """
-    fig = plt.figure(figsize=(14, 22), facecolor='white')
+def draw_triple_charts(df, ticker):
+    """绘制 Daily/Weekly/Monthly 三周期对齐图表"""
+    fig = plt.figure(figsize=(15, 25), facecolor='white')
     
-    # 指标配置：日/周/月
+    # 周期参数配置 (HI_P, LO_P, MA_P, RSI_P, EMA_P)
     configs = [
-        ('DAILY', '6M', 252, 20, 200, 5, 3),   # HI, LO, MA, RSI_P, EMA_P
+        ('DAILY', '6M', 252, 20, 200, 5, 3),
         ('WEEKLY', '2Y', 52, 10, 50, 10, 5),
         ('MONTHLY', '8Y', 12, 6, 20, 20, 10)
     ]
@@ -31,37 +31,37 @@ def draw_audit_charts(df, ticker):
         work_df['LO'] = work_df['Low'].rolling(l_p).min().shift(1)  # 橙点线
         work_df['MA'] = work_df['Close'].rolling(ma_p).mean()      # 蓝实线
         
-        # 计算 B-XTRender 动能
-        rsi = calculate_rsi_wilder(work_df['Close'], rsi_p) - 50
-        work_df['hist'] = rsi.ewm(span=ema_p, adjust=False).mean()
+        # B-XTRender 动能计算
+        rsi_diff = calculate_rsi_wilder(work_df['Close'], rsi_p) - 50
+        work_df['hist'] = rsi_diff.ewm(span=ema_p, adjust=False).mean()
         work_df['signal'] = work_df['hist'].ewm(span=ema_p*2, adjust=False).mean()
         
         plot_df = work_df.last(p_range)
         
-        # 布局：上部主图，下部动能图
+        # 绘图区域划分
         ax_main = plt.subplot(6, 1, (i*2-1))
         ax_hist = plt.subplot(6, 1, (i*2))
         
-        # 配置主图叠加层 
+        # 配置主图线义 
         apds = [
             mpf.make_addplot(plot_df['HI'], ax=ax_main, color='purple', linestyle='--', width=0.8),
-            mpf.make_addplot(plot_df['LO'], ax=ax_main, color='orange', linestyle=':', width=1.2),
+            mpf.make_addplot(plot_df['LO'], ax=ax_main, color='orange', linestyle=':', width=1.5),
             mpf.make_addplot(plot_df['MA'], ax=ax_main, color='blue', linestyle='-', width=1.0),
         ]
         
-        # 配置 B-XTRender 动能柱 
+        # 配置 B-XTRender 动能柱
         colors = ['#26a69a' if val > 0 else '#ef5350' for val in plot_df['hist']]
         apds.append(mpf.make_addplot(plot_df['hist'], ax=ax_hist, type='bar', color=colors, width=0.7))
-        apds.append(mpf.make_addplot(plot_df['signal'], ax=ax_hist, color='navy', width=1.2))
+        apds.append(mpf.make_addplot(plot_df['signal'], ax=ax_hist, color='blue', width=1.2))
         
         mpf.plot(plot_df, type='candle', ax=ax_main, addplot=apds, style='charles', datetime_format='%Y-%m')
         ax_main.set_title(f"{p_name} | {ticker} | V2.9.6", fontsize=14, fontweight='bold', loc='left')
-        ax_hist.axhline(0, color='gray', linewidth=0.5, alpha=0.5)
+        ax_hist.axhline(0, color='gray', alpha=0.3)
 
     plt.tight_layout()
     return fig
 
-# UI
+# UI 交互
 st.sidebar.title("SmartStock V2.9.6")
 ticker = st.sidebar.text_input("Ticker Symbol", value="D05.SI")
 
@@ -71,26 +71,27 @@ with t1:
     if st.button("RUN EOD ANALYSIS"):
         res = run_eod_analyzer(ticker)
         if res:
+            # 顶部审计状态 
             st.info(f"### ACTION: {res['Action']}")
             st.write(f"**REASON:** {res['Reason']}")
             
-            # Physics Log 仪表盘 
+            # 物理学仪表盘 [cite: 3]
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Fuel (Vol Ratio)", res["Fuel"])
             c2.metric("Push (Close Pos)", res["Push"])
             c3.metric("Gap (Dist High)", res["Gap"])
-            c4.metric("Macro Check", res["Macro"])
+            c4.metric("Stop Level", res["Stop"])
             
             st.divider()
             st.subheader("CHART AUDIT (MULTI-PERIOD SYNC)")
-            fig = draw_audit_charts(res["Full_Data"], ticker)
+            fig = draw_triple_charts(res["Full_Data"], ticker)
             st.pyplot(fig)
             
-            # 对齐 Legend 解释 
+            # 图表线义解释说明 
             st.markdown("""
-            **CHART LEGEND:**
-            - 🟦 **BLUE SOLID**: 200D/50W/20M MA (大周期成本线)
-            - 🟪 **PURPLE DASH**: 1-YEAR HIGH (阻力参考)
-            - 🟧 **ORANGE DOT**: L20 SUPPORT (审计止损线)
-            - 🟢🔴 **B-XTRender**: 动能共振系统
+            **CHART LEGEND / 图表线义解释:**
+            - 🟦 **BLUE SOLID**: 大周期成本分界线 (200D/50W/20M MA)
+            - 🟪 **PURPLE DASH**: 一年高点阻力位 (1-YEAR HIGH)
+            - 🟧 **ORANGE DOT**: 审计硬止损线 (L20 SUPPORT)
+            - 🟢🔴 **B-XTRender**: 动能进攻/回调柱状图
             """)
