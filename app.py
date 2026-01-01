@@ -1,7 +1,8 @@
 import streamlit as st
 import mplfinance as mpf
 import matplotlib.pyplot as plt
-from engine import run_eod_analyzer, get_rsi_ema
+import pandas as pd
+from engine import run_eod_analyzer, get_rsi_ema, run_smartstock_v296_engine
 
 st.set_page_config(page_title="SmartStock V2.9.6 Audit", layout="wide")
 
@@ -37,24 +38,40 @@ def draw_v296_charts(data_dict, ticker):
             ax_b.axhline(0, color='gray', alpha=0.3)
         plt.tight_layout()
         return fig
-    except:
-        return None
+    except: return None
 
-st.title("SmartStock V2.9.6 Audit")
+# UI 顶部布局
+st.title("SmartStock V2.9.6 Audit System")
 ticker = st.sidebar.text_input("Ticker Symbol", value="D05.SI")
+start_date = st.sidebar.date_input("Backtest Start", value=pd.to_datetime("2020-01-01"))
 
-if st.sidebar.button("RUN EOD ANALYSIS"):
-    res = run_eod_analyzer(ticker)
-    if res:
-        st.subheader(f"ACTION: {res['Action']}")
-        st.write(f"REASON: {res['Reason']}")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Fuel", res['Fuel'])
-        c2.metric("Push", res['Push'])
-        c3.metric("Gap", res['Gap'])
-        c4.metric("Stop", res['Stop'])
-        
-        fig = draw_v296_charts(res, ticker)
-        if fig: st.pyplot(fig)
-    else:
-        st.error("Data Fetch Error. Please check Ticker.")
+# 核心 Tab 结构
+tab1, tab2 = st.tabs(["【 AUDIT SUMMARY 】", "【 BACKTEST AUDIT 】"])
+
+with tab1:
+    if st.sidebar.button("RUN EOD ANALYSIS"):
+        res = run_eod_analyzer(ticker)
+        if res:
+            st.subheader(f"ACTION: {res['Action']}")
+            st.write(f"REASON: {res['Reason']}")
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Fuel", res['Fuel'])
+            c2.metric("Push", res['Push'])
+            c3.metric("Gap", res['Gap'])
+            c4.metric("Stop", res['Stop'])
+            
+            fig = draw_v296_charts(res, ticker)
+            if fig: st.pyplot(fig)
+        else:
+            st.error("Fetch Error. Check Ticker.")
+
+with tab2:
+    st.subheader("Performance History")
+    if st.sidebar.button("RUN BACKTEST"):
+        stats, trade_log, equity_df = run_smartstock_v296_engine(ticker, start_date, pd.to_datetime("today"))
+        if not equity_df.empty:
+            st.write(f"**Total Return:** {stats.get('Total Return')}")
+            st.line_chart(equity_df.set_index('Date')['Equity'])
+            st.dataframe(trade_log)
+        else:
+            st.warning("No data for backtest.")
